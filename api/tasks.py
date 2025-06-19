@@ -7,19 +7,11 @@ from .utils import (
     reuse_clip_if_exists,
     process_clip_embeddings
 )
-from django.conf import settings
-import time
+from .constants import OPENAI_API_KEY, OPENROUTER_API_KEY
 import os
 import logging
 
 logger = logging.getLogger(__name__)
-
-@shared_task
-def ai_summarize_clip(clip_id):
-    # Your AI/ML code goes here
-    logger.info(f"Summarizing clip {clip_id}")
-    # Example: download transcript, call OpenAI, save result to DB
-    return True
 
 
 @shared_task(bind=True)
@@ -27,7 +19,6 @@ def process_clip_task(self, clip_id):
     task_entry = ClipProcessingTask.objects.get(celery_task_id=self.request.id)
     audio_path = None  # Initialize audio_path as None
     try:
-        OPENAI_API_KEY = settings.OPENAI_API_KEY
         task_entry.status = 'processing'
         task_entry.save()
         clip = Clip.objects.get(id=clip_id)
@@ -64,7 +55,7 @@ def process_clip_task(self, clip_id):
         logger.info(f"Existing curios: {curio_names}")
 
         # 4. Summarize & categorize
-        summary_data = summarize_and_categorize_clip(transcript, curio_names, settings.OPENROUTER_API_KEY)
+        summary_data = summarize_and_categorize_clip(transcript, curio_names, OPENROUTER_API_KEY)
         logger.info(f"AI response: {summary_data}")
         clip.summary = summary_data.get("one_line_summary", "")
         clip.save()
@@ -104,7 +95,7 @@ def process_clip_task(self, clip_id):
         clip.description = summary_data.get("description", "")
         clip.save()
 
-        process_clip_embeddings(clip, settings.OPENAI_API_KEY)
+        process_clip_embeddings(clip, OPENAI_API_KEY)
 
         task_entry.status = 'completed'
         task_entry.save()

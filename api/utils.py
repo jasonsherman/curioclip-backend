@@ -5,9 +5,12 @@ import tempfile
 import openai
 from yt_dlp import YoutubeDL
 import json_repair
-from django.conf import settings
 from datetime import datetime, timedelta
 from .models import Clip, Tag, ClipTag, Curio, ClipEmbedding
+from .constants import (
+    EMBEDDING_MODEL, TRANSCRIPTION_MODEL, AI_MODELS,
+    SUPABASE_JWT_SECRET, 
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,7 +28,7 @@ def generate_test_jwt_token(user_id, email=None):
     }
     token = jwt.encode(
         payload,
-        settings.SUPABASE_JWT_SECRET,
+        SUPABASE_JWT_SECRET,
         algorithm='HS256'
     )
     return token
@@ -84,11 +87,12 @@ def transcribe_audio_with_openai(audio_path, openai_api_key):
     openai.api_key = openai_api_key
     with open(audio_path, "rb") as audio_file:
         transcript = openai.audio.transcriptions.create(
-            model="whisper-1",
+            model=TRANSCRIPTION_MODEL,
             file=audio_file,
-            response_format="text"  # or "json" if you want more detail
+            response_format="text" 
         )
     return transcript
+
 
 def summarize_transcript(transcript, openai_api_key):
     openai.api_key = openai_api_key
@@ -109,6 +113,7 @@ def summarize_transcript(transcript, openai_api_key):
     )
     summary = response.choices[0].message.content.strip()
     return summary
+
 
 def parse_openai_response(response_content):
     """
@@ -135,7 +140,7 @@ def parse_openai_response(response_content):
         raise ValueError(f"JSON parsing error: {e}\n model_response: {response_content}")
     
 
-def summarize_and_categorize_clip(transcript, curio_names, openai_api_key, model="qwen/qwen3-235b-a22b:free"):
+def summarize_and_categorize_clip(transcript, curio_names, openai_api_key):
     prompt = f"""
 You are an AI assistant helping users organize and summarize social video clips.
 
@@ -169,15 +174,22 @@ Rules:
          base_url="https://openrouter.ai/api/v1",
          api_key=openai_api_key
     )
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2,
-    )
-    ai_content = response.choices[0].message.content.strip()
-    # Parse the JSON output
-    summary_data = parse_openai_response(ai_content)
-    return summary_data
+    last_exception = None
+    for model in AI_MODELS:
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+            )
+            ai_content = response.choices[0].message.content.strip()
+            summary_data = parse_openai_response(ai_content)
+            return summary_data
+        except Exception as e:
+            logger.info(f"{model} is busy..")
+            last_exception = e
+            continue
+    raise last_exception if last_exception else RuntimeError("All model calls failed.")
 
 
 def reuse_clip_if_exists(clip, OPENAI_API_KEY):
@@ -257,7 +269,6 @@ def reuse_clip_if_exists(clip, OPENAI_API_KEY):
     return True
 
 
-
 def chunk_text(text, chunk_size=300, overlap_ratio=0.2):
     words = text.split()
     n = len(words)
@@ -276,14 +287,15 @@ def chunk_text(text, chunk_size=300, overlap_ratio=0.2):
     return chunks
 
 
-def embed_texts(text_list, openai_api_key, model = "text-embedding-3-small"):
+def embed_texts(text_list, openai_api_key):
     openai.api_key = openai_api_key
     logger.info(f"Creating embedding for: {text_list}")
     response = openai.embeddings.create(
         input=text_list,
-        model=model
+        model=EMBEDDING_MODEL
     )
     return [item.embedding for item in response.data]
+
 
 def process_clip_embeddings(clip, openai_api_key):
     transcript = clip.transcript or ""
@@ -315,3 +327,20 @@ def process_clip_embeddings(clip, openai_api_key):
             text_chunk=chunk,
             embedding=vector
         )
+
+
+def vector_search_clip_ids_with_scores(query_embedding, top_n=30):
+    if isinstance(query_embedding, (list, tuple)):
+        query_embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
+    else:
+        query_embedding_str = str(query_embedding)
+    results = (
+        ClipEmbedding.objects.extra(
+            select={'similarity': "embedding <=> %s"},
+            select_params=[query_embedding_str]
+        )
+        .order_by('similarity')
+        .values_list('clip_id', 'similarity')
+        .distinct()
+    )[:top_n]
+    return list(results)
