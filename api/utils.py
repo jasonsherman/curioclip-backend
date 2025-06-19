@@ -3,6 +3,7 @@ import jwt
 import os
 import tempfile
 import openai
+from django.db import connection
 from yt_dlp import YoutubeDL
 import json_repair
 from datetime import datetime, timedelta
@@ -329,18 +330,36 @@ def process_clip_embeddings(clip, openai_api_key):
         )
 
 
-def vector_search_clip_ids_with_scores(query_embedding, top_n=30):
+def vector_search_clip_ids_with_similarity(query_embedding, top_n=30, threshold=0.7):
+    """
+    Returns a list of (clip_id, percent_match, embedding_id) tuples for best matches above threshold.
+    """
+    
     if isinstance(query_embedding, (list, tuple)):
         query_embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
     else:
         query_embedding_str = str(query_embedding)
-    results = (
-        ClipEmbedding.objects.extra(
-            select={'similarity': "embedding <=> %s"},
-            select_params=[query_embedding_str]
-        )
-        .order_by('similarity')
-        .values_list('clip_id', 'similarity')
-        .distinct()
-    )[:top_n]
-    return list(results)
+    sql = """
+        SELECT id, clip_id, field, chunk_index, text_chunk,
+               (1 - (embedding <=> %s::vector)) as percent_match
+        FROM clip_embeddings
+        ORDER BY percent_match DESC
+        LIMIT %s;
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(sql, [query_embedding_str, top_n])
+        results = cursor.fetchall()
+    # Results: (embedding_id, clip_id, field, chunk_index, text_chunk, percent_match)
+    filtered = [r for r in results if r[5] >= threshold]
+    # Return as list of dicts
+    return [
+        {
+            "clip_id": r[1],
+            "embedding_id": r[0],
+            "percent_match": round(r[5] * 100, 2),  # percent as float
+            "field": r[2],
+            "chunk_index": r[3],
+            "text_chunk": r[4],
+        }
+        for r in filtered
+    ]

@@ -19,21 +19,19 @@ class ClipCreateSerializer(serializers.ModelSerializer):
 class ClipListSerializer(serializers.ModelSerializer):
     tags = serializers.SerializerMethodField()
     curio_name = serializers.CharField(source="curio.name", read_only=True)
-    similarity = serializers.SerializerMethodField()
     percent_match = serializers.SerializerMethodField()
 
     class Meta:
         model = Clip
         fields = [
             "id", "title", "summary", "thumbnail_url", "platform",
-            "created_at", "is_favorite", "curio", "curio_name", "description", "tags", "similarity", "percent_match"
+            "created_at", "is_favorite", "curio", "curio_name", "description", "tags", "percent_match"
         ]
-        
+
     def get_tags(self, obj):
         return list(obj.cliptag_set.values_list('tag__name', flat=True))
-
-    def get_similarity(self, obj):
-        return getattr(obj, 'similarity', None)
-
+    
     def get_percent_match(self, obj):
-        return getattr(obj, 'percent_match', None)
+        # Get from serializer context if available
+        percent_map = self.context.get("percent_match_map", {})
+        return percent_map.get(str(obj.id), None)

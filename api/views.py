@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from django.db.models import Count, Q, Case, When, Value, FloatField
 from .models import Curio, Clip, Tag, ClipProcessingTask
 from .serializers import CurioCreateSerializer, ClipCreateSerializer, ClipListSerializer
-from .utils import embed_texts, vector_search_clip_ids_with_scores
+from .utils import embed_texts, vector_search_clip_ids_with_similarity
 from .tasks import process_clip_task 
 from .constants import OPENAI_API_KEY
 import os
@@ -46,67 +46,65 @@ class ClipSearchView(ListAPIView):
     permission_classes = [IsAuthenticated]
     pagination_class = None 
 
-    def get_queryset(self):
-        queryset = Clip.objects.filter(user_id=self.request.user.id)
+    def get(self, request, *args, **kwargs):
+        # Prepare base queryset (user's clips)
+        queryset = Clip.objects.filter(user_id=request.user.id)
 
-        # --- Keyword semantic search ---
-        q = self.request.query_params.get('q')
+        # Semantic search if keyword query
+        q = request.query_params.get('q')
+        percent_by_clip = {}
         if q:
-            query_embedding = embed_texts([q], OPENAI_API_KEY)[0]
-            results = vector_search_clip_ids_with_scores(query_embedding)
-            # results: list of (clip_id, similarity)
-            clip_id_to_similarity = {clip_id: similarity for clip_id, similarity in results}
-            clip_ids = list(clip_id_to_similarity.keys())
-            queryset = queryset.filter(id__in=clip_ids)
-            cases_similarity = [
-                When(id=clip_id, then=Value(similarity))
-                for clip_id, similarity in clip_id_to_similarity.items()
-            ]
-            cases_percent = [
-                When(id=clip_id, then=Value((1 - similarity) * 100 if similarity is not None else None))
-                for clip_id, similarity in clip_id_to_similarity.items()
-            ]
-            queryset = queryset.annotate(
-                similarity=Case(
-                    *cases_similarity,
-                    default=Value(None),
-                    output_field=FloatField()
-                ),
-                percent_match=Case(
-                    *cases_percent,
-                    default=Value(None),
-                    output_field=FloatField()
-                )
-            )
+            query_embedding = embed_texts(q, OPENAI_API_KEY)[0]
+            matches = vector_search_clip_ids_with_similarity(query_embedding, top_n=30, threshold=0.15)
+            matched_clip_ids = [m["clip_id"] for m in matches]
+            percent_by_clip = {str(m["clip_id"]): m["percent_match"] for m in matches}
+            queryset = queryset.filter(id__in=matched_clip_ids)
         
-        # --- Filter: tags (comma-separated) ---
-        tags_param = self.request.query_params.get('tags')
+          
+
+        # Tag filter
+        tags_param = request.query_params.get('tags')
         if tags_param:
             tags = [t.strip() for t in tags_param.split(",") if t.strip()]
             if tags:
-                queryset = queryset.filter(cliptag__tag__name__in=tags).distinct()
-        
-        # --- Filter: platform ---
-        platform = self.request.query_params.get('platform')
+                clips = [c for c in clips if set(tags).intersection(set([t for t in c.cliptag_set.values_list('tag__name', flat=True)]))]
+
+        # Platform filter
+        platform = request.query_params.get('platform')
         if platform:
-            queryset = queryset.filter(platform=platform)
+            clips = [c for c in clips if c.platform == platform]
 
-        # --- Filter: is_favorite ---
-        is_favorite = self.request.query_params.get('is_favorite')
+        # Curio filter
+        curio_id = request.query_params.get('curio')
+        if curio_id:
+            clips = [c for c in clips if str(c.curio_id) == curio_id]
+
+        # Favourites filter
+        is_favorite = request.query_params.get('is_favorite')
         if is_favorite is not None:
-            queryset = queryset.filter(is_favorite=is_favorite.lower() == "true")
-        
-        # --- Sorting ---
-        sort = self.request.query_params.get('sort', 'recent')
+            val = is_favorite.lower() == "true"
+            clips = [c for c in clips if c.is_favorite == val]
+
+        clips = list(queryset)
+
+        # Sorting
+        sort = request.query_params.get('sort', 'recent')
         if sort == "recent":
-            queryset = queryset.order_by('-created_at')
+            clips.sort(key=lambda c: c.created_at, reverse=True)
         elif sort == "favourites":
-            queryset = queryset.filter(is_favorite=True).order_by('-created_at')
+            clips = [c for c in clips if c.is_favorite]
+            clips.sort(key=lambda c: c.created_at, reverse=True)
         elif sort == "trending":
-            queryset = queryset.annotate(num_ratings=Count('curiorating')).order_by('-num_ratings', '-created_at')
+            # For demo, sort by #ratings (add to Clip model/annotate in production)
+            clips.sort(key=lambda c: getattr(c, "num_ratings", 0), reverse=True)
 
-        return queryset
-
+        # Paginate if desired, or slice manually
+        # (DRF pagination requires queryset; for semantic, you'd want to paginate after filtering)
+        page = self.paginate_queryset(clips)
+        serializer = self.get_serializer(page if page is not None else clips, many=True, context={"percent_match_map": percent_by_clip})
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
 class ClipProcessingStatusView(generics.RetrieveAPIView):
     permission_classes = [IsAuthenticated]
     queryset = ClipProcessingTask.objects.all()
