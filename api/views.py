@@ -9,6 +9,10 @@ from .utils import embed_texts, vector_search_clip_ids_with_similarity
 from .tasks import process_clip_task 
 from .constants import OPENAI_API_KEY
 import os
+from rest_framework.views import APIView
+from django.http import StreamingHttpResponse, HttpResponseBadRequest, HttpResponse
+import requests
+from urllib.parse import urlparse
 
 class CurioCreateView(generics.CreateAPIView):
     serializer_class = CurioCreateSerializer
@@ -105,6 +109,7 @@ class ClipSearchView(ListAPIView):
         if page is not None:
             return self.get_paginated_response(serializer.data)
         return Response(serializer.data)
+
 class ClipProcessingStatusView(generics.RetrieveAPIView):
     permission_classes = [IsAuthenticated]
     queryset = ClipProcessingTask.objects.all()
@@ -118,3 +123,53 @@ class ClipProcessingStatusView(generics.RetrieveAPIView):
             'updated_at': instance.updated_at,
         }
         return Response(data)
+
+class ProxyImageView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        url = request.GET.get('url')
+
+        if not url:
+            return HttpResponseBadRequest("Missing image URL.")
+
+        try:
+            # Fetch the image from external source
+            response = requests.get(url, stream=True)
+            content_type = response.headers.get("Content-Type", "image/jpeg")
+
+            return HttpResponse(response.content, content_type=content_type)
+        except Exception as e:
+            return HttpResponse(f"Failed to fetch image: {str(e)}", status=500)
+        # image_url = request.query_params.get('url')
+        # if not image_url:
+        #     return HttpResponseBadRequest('Missing url parameter')
+        # parsed = urlparse(image_url)
+        # if parsed.scheme not in ('http', 'https'):
+        #     return HttpResponseBadRequest('Invalid URL scheme')
+        # try:
+        #     resp = requests.get(image_url, stream=True, timeout=5)
+        #     content_type = resp.headers.get('Content-Type', '')
+        #     # if not content_type.startswith('image/'):
+        #     #     return HttpResponseBadRequest('URL does not point to an image')
+        #     response = StreamingHttpResponse(resp.iter_content(1024), content_type=content_type)
+        #     # Optionally set cache headers, etc.
+        #     response['Content-Length'] = resp.headers.get('Content-Length', '')
+        #     return response
+        # except requests.RequestException:
+        #     return HttpResponseBadRequest('Failed to fetch image')
+
+class ClipDetailView(generics.RetrieveAPIView):
+    serializer_class = ClipListSerializer
+    permission_classes = [IsAuthenticated]
+    lookup_field = 'id'
+    queryset = Clip.objects.all()
+
+    def get_queryset(self):
+        # Only allow access to the user's own clips
+        return Clip.objects.filter(user_id=self.request.user.id)
+
+    def retrieve(self, request, *args, **kwargs):
+        response = super().retrieve(request, *args, **kwargs)
+        response['Cache-Control'] = 'public, max-age=120'
+        return response

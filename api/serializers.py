@@ -24,7 +24,7 @@ class ClipListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Clip
         fields = [
-            "id", "title", "summary", "thumbnail_url", "platform",
+            "id", "platform_video_id", "url", "title", "summary", "transcript", "thumbnail_url", "platform",
             "created_at", "is_favorite", "curio", "curio_name", "description", "tags", "percent_match"
         ]
 
