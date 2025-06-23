@@ -3,11 +3,18 @@ import jwt
 import os
 import tempfile
 import openai
+import requests
+from supabase import create_client
+from PIL import Image
+from django.db import connection
 from yt_dlp import YoutubeDL
 import json_repair
-from django.conf import settings
 from datetime import datetime, timedelta
 from .models import Clip, Tag, ClipTag, Curio, ClipEmbedding
+from .constants import (
+    EMBEDDING_MODEL, TRANSCRIPTION_MODEL, AI_MODELS,
+    SUPABASE_JWT_SECRET, 
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,7 +32,7 @@ def generate_test_jwt_token(user_id, email=None):
     }
     token = jwt.encode(
         payload,
-        settings.SUPABASE_JWT_SECRET,
+        SUPABASE_JWT_SECRET,
         algorithm='HS256'
     )
     return token
@@ -40,7 +47,21 @@ def detect_platform(url):
         return "instagram"
     else:
         return "unknown"
-    
+
+
+def get_platform_video_id(info, url, platform):
+    if platform == "youtube":
+        return info.get("id")
+    elif platform == "instagram":
+        return info.get("id") or (
+            url.rstrip("/").split("/")[-1].split("?")[0]
+        )
+    elif platform == "tiktok":
+        return info.get("id") or (
+            url.rstrip("/").split("/")[-1].split("?")[0]
+        )
+    else:
+        return info.get("id")
 
 def fetch_audio_and_metadata(url):
     platform = detect_platform(url)
@@ -69,14 +90,31 @@ def fetch_audio_and_metadata(url):
         else:
             # Fallback (works for most YouTube videos)
             filepath = ydl.prepare_filename(info).replace('.webm', '.mp3').replace('.m4a', '.mp3')
+        
+        # Download thumbnail image locally for further upload
+        thumbnail_url = info.get('thumbnail')
+        thumbnail_path = None
+        if thumbnail_url:
+            _, ext = os.path.splitext(thumbnail_url.split("?")[0])
+            ext = ext if ext in [".jpg", ".jpeg", ".png"] else ".jpg"
+            thumbnail_path = tempfile.mktemp(suffix=ext)
+            try:
+                download_image(thumbnail_url, thumbnail_path)
+            except Exception as e:
+                thumbnail_path = None
+
+        # ----> Extract native video ID for supported platforms
+        platform_video_id = get_platform_video_id(info, url, platform)
 
         metadata = {
             'title': info.get('title'),
             'duration': info.get('duration'),
             'uploader': info.get('uploader'),
-            'thumbnail': info.get('thumbnail'),
+            'thumbnail': thumbnail_url,
+            'thumbnail_path': thumbnail_path,
             'platform': platform,
             'filepath': filepath,
+            'platform_video_id': platform_video_id,
         }
         return metadata
     
@@ -84,11 +122,12 @@ def transcribe_audio_with_openai(audio_path, openai_api_key):
     openai.api_key = openai_api_key
     with open(audio_path, "rb") as audio_file:
         transcript = openai.audio.transcriptions.create(
-            model="whisper-1",
+            model=TRANSCRIPTION_MODEL,
             file=audio_file,
-            response_format="text"  # or "json" if you want more detail
+            response_format="text" 
         )
     return transcript
+
 
 def summarize_transcript(transcript, openai_api_key):
     openai.api_key = openai_api_key
@@ -109,6 +148,7 @@ def summarize_transcript(transcript, openai_api_key):
     )
     summary = response.choices[0].message.content.strip()
     return summary
+
 
 def parse_openai_response(response_content):
     """
@@ -135,7 +175,7 @@ def parse_openai_response(response_content):
         raise ValueError(f"JSON parsing error: {e}\n model_response: {response_content}")
     
 
-def summarize_and_categorize_clip(transcript, curio_names, openai_api_key, model="qwen/qwen3-235b-a22b:free"):
+def summarize_and_categorize_clip(transcript, curio_names, openai_api_key):
     prompt = f"""
 You are an AI assistant helping users organize and summarize social video clips.
 
@@ -169,18 +209,50 @@ Rules:
          base_url="https://openrouter.ai/api/v1",
          api_key=openai_api_key
     )
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2,
-    )
-    ai_content = response.choices[0].message.content.strip()
-    # Parse the JSON output
-    summary_data = parse_openai_response(ai_content)
-    return summary_data
+    last_exception = None
+    for model in AI_MODELS:
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+            )
+            ai_content = response.choices[0].message.content.strip()
+            summary_data = parse_openai_response(ai_content)
+            return summary_data
+        except Exception as e:
+            logger.info(f"{model} is busy..")
+            last_exception = e
+            continue
+    raise last_exception if last_exception else RuntimeError("All model calls failed.")
 
 
-def reuse_clip_if_exists(clip, OPENAI_API_KEY):
+def handle_thumbnail_upload(source_url, clip_id, supabase_url, supabase_key, max_size=(320,320), quality=60, bucket="thumbnails"):
+    """
+    Downloads an image from source_url, compresses it, uploads to Supabase, and returns the new public URL.
+    Cleans up all temp files.
+    Returns public_url or None.
+    """
+    ext = ".jpg"
+    tmp_original = tempfile.mktemp(suffix=ext)
+    tmp_compressed = tempfile.mktemp(suffix=f"_compressed{ext}")
+    try:
+        download_image(source_url, tmp_original)
+        compress_image(tmp_original, tmp_compressed, max_size=max_size, quality=quality)
+        storage_path = f"{clip_id}.jpg"
+        public_url = upload_image_to_supabase(
+            tmp_compressed, storage_path, supabase_url, supabase_key, bucket=bucket
+        )
+        return public_url
+    except Exception as e:
+        logger.info(f"Error during uploading to supabase: {e}")
+        return None
+    finally:
+        for p in [tmp_original, tmp_compressed]:
+            if os.path.exists(p):
+                os.remove(p)
+
+def reuse_clip_if_exists(clip, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY):
     """
     Checks if the given clip's URL was already processed for any other user.
     If so, clones the results (title, transcript, summary, tags) into this clip.
@@ -208,13 +280,28 @@ def reuse_clip_if_exists(clip, OPENAI_API_KEY):
 
     # 2.  Copy meta, tags and **embeddings** to the new user's clip
     clip.title        = existing_clip.title
-    clip.thumbnail_url= existing_clip.thumbnail_url
     clip.platform     = existing_clip.platform
     clip.transcript   = existing_clip.transcript
     clip.summary      = existing_clip.summary
+    clip.platform_video_id = existing_clip.platform_video_id
     clip.description  = getattr(existing_clip, "description", "")
     clip.save()
-   
+
+    # --- Thumbnail Handling ---
+    public_url = None
+    if existing_clip.thumbnail_url:
+        public_url = handle_thumbnail_upload(
+            existing_clip.thumbnail_url, clip.id, SUPABASE_URL, SUPABASE_KEY
+        )
+    
+    if not public_url:
+        data = fetch_audio_and_metadata(clip.url)
+        if data.get('thumbnail'):
+            public_url = handle_thumbnail_upload(
+                data['thumbnail'], clip.id, SUPABASE_URL, SUPABASE_KEY
+            )
+    clip.thumbnail_url = public_url
+    clip.save()
 
     # -- tags
     tags = Tag.objects.filter(cliptag__clip=existing_clip)
@@ -257,7 +344,6 @@ def reuse_clip_if_exists(clip, OPENAI_API_KEY):
     return True
 
 
-
 def chunk_text(text, chunk_size=300, overlap_ratio=0.2):
     words = text.split()
     n = len(words)
@@ -276,14 +362,15 @@ def chunk_text(text, chunk_size=300, overlap_ratio=0.2):
     return chunks
 
 
-def embed_texts(text_list, openai_api_key, model = "text-embedding-3-small"):
+def embed_texts(text_list, openai_api_key):
     openai.api_key = openai_api_key
     logger.info(f"Creating embedding for: {text_list}")
     response = openai.embeddings.create(
         input=text_list,
-        model=model
+        model=EMBEDDING_MODEL
     )
     return [item.embedding for item in response.data]
+
 
 def process_clip_embeddings(clip, openai_api_key):
     transcript = clip.transcript or ""
@@ -315,3 +402,74 @@ def process_clip_embeddings(clip, openai_api_key):
             text_chunk=chunk,
             embedding=vector
         )
+
+
+def vector_search_clip_ids_with_similarity(query_embedding, top_n=30, threshold=0.7):
+    """
+    Returns a list of (clip_id, percent_match, embedding_id) tuples for best matches above threshold.
+    """
+    
+    if isinstance(query_embedding, (list, tuple)):
+        query_embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
+    else:
+        query_embedding_str = str(query_embedding)
+    sql = """
+        SELECT id, clip_id, field, chunk_index, text_chunk,
+               (1 - (embedding <=> %s::vector)) as percent_match
+        FROM clip_embeddings
+        ORDER BY percent_match DESC
+        LIMIT %s;
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(sql, [query_embedding_str, top_n])
+        results = cursor.fetchall()
+    # Results: (embedding_id, clip_id, field, chunk_index, text_chunk, percent_match)
+    filtered = [r for r in results if r[5] >= threshold]
+    # Return as list of dicts
+    return [
+        {
+            "clip_id": r[1],
+            "embedding_id": r[0],
+            "percent_match": round(r[5] * 100, 2),  # percent as float
+            "field": r[2],
+            "chunk_index": r[3],
+            "text_chunk": r[4],
+        }
+        for r in filtered
+    ]
+
+
+def download_image(url, out_path):
+    r = requests.get(url, stream=True, timeout=10)
+    if r.status_code == 200:
+        with open(out_path, 'wb') as f:
+            for chunk in r.iter_content(1024):
+                f.write(chunk)
+        return out_path
+    raise Exception(f"Failed to download image: {url}")
+
+
+def upload_image_to_supabase(local_path, storage_path, supabase_url, supabase_key, bucket="thumbnails"):
+    supabase = create_client(supabase_url, supabase_key)
+    with open(local_path, "rb") as f:
+        resp = supabase.storage.from_(bucket).upload(storage_path, f)
+        public_url = f"{supabase_url.replace('/rest/v1', '')}/storage/v1/object/public/{bucket}/{storage_path}"
+        return public_url
+    
+
+def compress_image(input_path, output_path, max_size=(320, 320), quality=60):
+    """
+    Compresses and resizes an image to save storage/bandwidth.
+    max_size: (width, height) in pixels.
+    quality: JPEG quality 1-100 (lower = more compression).
+    """
+    try:
+        img = Image.open(input_path)
+        img.thumbnail(max_size, Image.LANCZOS)
+        # Always convert to RGB for JPEG
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+        img.save(output_path, format="JPEG", quality=quality, optimize=True)
+        return output_path
+    except Exception as e:
+        raise Exception(f"Compression failed: {str(e)}")

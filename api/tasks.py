@@ -5,21 +5,21 @@ from .utils import (
     transcribe_audio_with_openai,
     summarize_and_categorize_clip,
     reuse_clip_if_exists,
-    process_clip_embeddings
+    process_clip_embeddings,
+    upload_image_to_supabase,
+    compress_image,
+    handle_thumbnail_upload
 )
-from django.conf import settings
-import time
+from .constants import (
+    OPENAI_API_KEY,
+    OPENROUTER_API_KEY,
+    SUPABASE_URL,
+    SUPABASE_KEY
+)
 import os
 import logging
 
 logger = logging.getLogger(__name__)
-
-@shared_task
-def ai_summarize_clip(clip_id):
-    # Your AI/ML code goes here
-    logger.info(f"Summarizing clip {clip_id}")
-    # Example: download transcript, call OpenAI, save result to DB
-    return True
 
 
 @shared_task(bind=True)
@@ -27,12 +27,11 @@ def process_clip_task(self, clip_id):
     task_entry = ClipProcessingTask.objects.get(celery_task_id=self.request.id)
     audio_path = None  # Initialize audio_path as None
     try:
-        OPENAI_API_KEY = settings.OPENAI_API_KEY
         task_entry.status = 'processing'
         task_entry.save()
         clip = Clip.objects.get(id=clip_id)
 
-        reused = reuse_clip_if_exists(clip, OPENAI_API_KEY)
+        reused = reuse_clip_if_exists(clip, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY)
         if reused:
             logger.info("Clip already exists, skipping processing!")
             task_entry.status = 'completed'
@@ -43,10 +42,41 @@ def process_clip_task(self, clip_id):
         data = fetch_audio_and_metadata(clip.url)
         logger.info(f"Fetched data for clip {clip_id}: {data}")
         audio_path = data['filepath']
+        thumbnail_path = data.get('thumbnail_path')
+        public_url = None
+
+        if thumbnail_path and os.path.exists(thumbnail_path):
+            compressed_path = thumbnail_path.replace(".jpg", "_compressed.jpg")
+            try:
+                compress_image(thumbnail_path, compressed_path, max_size=(320, 320), quality=60)
+                storage_path = f"{clip.id}.jpg"
+                public_url = upload_image_to_supabase(
+                    compressed_path, storage_path, SUPABASE_URL, SUPABASE_KEY, bucket="thumbnails"
+                )
+                clip.thumbnail_url = public_url
+                clip.save()
+            finally:
+                if os.path.exists(thumbnail_path):
+                    os.remove(thumbnail_path)
+                if os.path.exists(compressed_path):
+                    os.remove(compressed_path)
+        else:
+            if data.get('thumbnail'):
+                public_url = handle_thumbnail_upload(
+                    data['thumbnail'],
+                    clip.id,
+                    SUPABASE_URL,
+                    SUPABASE_KEY,
+                    max_size=(320, 320),
+                    quality=60,
+                    bucket="thumbnails"
+                )
+            clip.thumbnail_url = public_url
+            clip.save()
 
         clip.title = data['title']
-        clip.thumbnail_url = data['thumbnail']
         clip.platform = data['platform']
+        clip.platform_video_id = data.get('platform_video_id')
         clip.save()
 
 
@@ -64,7 +94,7 @@ def process_clip_task(self, clip_id):
         logger.info(f"Existing curios: {curio_names}")
 
         # 4. Summarize & categorize
-        summary_data = summarize_and_categorize_clip(transcript, curio_names, settings.OPENROUTER_API_KEY)
+        summary_data = summarize_and_categorize_clip(transcript, curio_names, OPENROUTER_API_KEY)
         logger.info(f"AI response: {summary_data}")
         clip.summary = summary_data.get("one_line_summary", "")
         clip.save()
@@ -104,7 +134,7 @@ def process_clip_task(self, clip_id):
         clip.description = summary_data.get("description", "")
         clip.save()
 
-        process_clip_embeddings(clip, settings.OPENAI_API_KEY)
+        process_clip_embeddings(clip, OPENAI_API_KEY)
 
         task_entry.status = 'completed'
         task_entry.save()
@@ -116,3 +146,4 @@ def process_clip_task(self, clip_id):
     finally:
         if audio_path and os.path.exists(audio_path):
             os.remove(audio_path)
+        

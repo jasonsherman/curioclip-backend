@@ -28,7 +28,7 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 
-
+# AI API KEYS
 OPENAI_API_KEY = env('OPENAI_API_KEY')
 OPENROUTER_API_KEY = env('OPENROUTER_API_KEY')
 # Quick-start development settings - unsuitable for production
@@ -40,6 +40,11 @@ SECRET_KEY = 'django-insecure-otm5a)fehr&d2^xvca89zad1%u$t_8yqqt07@f3%&l=udxsf)0
 # JWT Settings
 SUPABASE_JWT_SECRET = env('SUPABASE_JWT_SECRET')
 
+# SUPABASE TOKENS
+SUPABASE_URL = env('SUPABASE_URL')
+SUPABASE_KEY = env('SUPABASE_KEY')
+SUPABASE_ANON_KEY = env('SUPABASE_ANON_KEY')
+
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
@@ -48,6 +53,9 @@ ALLOWED_HOSTS = []
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'curioclip.middleware.SupabaseJWTAuthentication',
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
     ],
 }
 # Application definition
@@ -62,9 +70,11 @@ INSTALLED_APPS = [
     'rest_framework',
     'api',
     'ai_tasks',
+    'corsheaders',
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -149,3 +159,5 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+CORS_ALLOW_ALL_ORIGINS = True

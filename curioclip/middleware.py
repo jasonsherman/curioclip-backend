@@ -1,29 +1,40 @@
-from rest_framework.authentication import BaseAuthentication
-from rest_framework import exceptions
 import jwt
 from django.conf import settings
-from django.contrib.auth.models import AnonymousUser
+from rest_framework.authentication import BaseAuthentication
+from rest_framework.exceptions import AuthenticationFailed
+from api.constants import SUPABASE_JWT_SECRET, SUPBASE_ISSUER
 
-class SupabaseJWTUser:
-    def __init__(self, id, email=None):
-        self.id = id
+
+ALGORITHM = "HS256"
+AUDIENCE  = "authenticated"        # Supabase default
+class SupabaseUser:
+    def __init__(self, sub, email=None):
+        self.id = sub
         self.email = email
         self.is_authenticated = True
 
 class SupabaseJWTAuthentication(BaseAuthentication):
+    """
+    Validate Supabase access / refresh / service-role tokens.
+
+    Expected header:  Authorization: Bearer <token>
+    """
     def authenticate(self, request):
-        auth = request.headers.get('Authorization')
-        if not auth or not auth.startswith('Bearer '):
-            return None  # No authentication, move on to next authentication class
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            return None        # let other authenticators run
 
-        token = auth[7:]
+        token = auth.split(" ", 1)[1]
         try:
-            payload = jwt.decode(token, settings.SUPABASE_JWT_SECRET, algorithms=["HS256"])
-            user_id = payload.get('sub') or payload.get('id')
-            user_email = payload.get('email')
-            user = SupabaseJWTUser(user_id, user_email)
-            return (user, None)
-        except Exception:
-            raise exceptions.AuthenticationFailed('Invalid token')
+            payload = jwt.decode(
+                token,
+                SUPABASE_JWT_SECRET,  # HS256 shared secret
+                algorithms=[ALGORITHM],
+                audience=AUDIENCE,             
+                issuer=SUPBASE_ISSUER,        
+            )
+        except jwt.PyJWTError as exc:
+            raise AuthenticationFailed(f"Invalid Supabase token: {exc}")
 
-        return None
+        user = SupabaseUser(payload["sub"], payload.get("email"))
+        return (user, None)
