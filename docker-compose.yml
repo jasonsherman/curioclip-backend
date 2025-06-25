@@ -1,6 +1,38 @@
 version: '3.9'
 
 services:
+  web:
+    build: .
+    command: gunicorn curioclip.wsgi:application --bind 0.0.0.0:8000 --workers 3
+    volumes:
+      - static_volume:/app/static
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    ports:
+      - "8000:8000"
+
+  celery:
+    build: .
+    command: celery -A curioclip worker --loglevel=info
+    volumes:
+      - static_volume:/app/static
+    env_file:
+      - .env
+    depends_on:
+      - redis
+
+  celery-beat:
+    build: .
+    command: celery -A curioclip beat --loglevel=info
+    volumes:
+      - static_volume:/app/static
+    env_file:
+      - .env
+    depends_on:
+      - redis
+
   redis:
     image: redis:7
     ports:
@@ -10,3 +42,4 @@ services:
 
 volumes:
   redis_data:
+  static_volume:
