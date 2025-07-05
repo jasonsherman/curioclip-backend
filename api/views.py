@@ -13,6 +13,7 @@ from rest_framework.views import APIView
 from django.http import StreamingHttpResponse, HttpResponseBadRequest, HttpResponse
 import requests
 from urllib.parse import urlparse
+from random import sample
 
 class CurioCreateView(generics.CreateAPIView):
     serializer_class = CurioCreateSerializer
@@ -42,7 +43,8 @@ class ClipCreateView(generics.CreateAPIView):
         response = super().create(request, *args, **kwargs)
         clip_id = response.data['id']
         task = ClipProcessingTask.objects.get(clip_id=clip_id)
-        response.data['processing_status_url'] = f"/api/clip-status/{task.id}/"
+        response.data['processing_status_url'] = f"/clip-status/{task.id}/"
+        response.data['task_id'] = task.id
         return response
 
 class ClipSearchView(ListAPIView):
@@ -53,6 +55,7 @@ class ClipSearchView(ListAPIView):
     def get(self, request, *args, **kwargs):
         # Prepare base queryset (user's clips)
         queryset = Clip.objects.filter(user_id=request.user.id)
+        clips = list(queryset)  # Always initialize clips
 
         # Semantic search if keyword query
         q = request.query_params.get('q')
@@ -63,9 +66,8 @@ class ClipSearchView(ListAPIView):
             matched_clip_ids = [m["clip_id"] for m in matches]
             percent_by_clip = {str(m["clip_id"]): m["percent_match"] for m in matches}
             queryset = queryset.filter(id__in=matched_clip_ids)
+            clips = list(queryset)  # Update clips if semantic search is used
         
-          
-
         # Tag filter
         tags_param = request.query_params.get('tags')
         if tags_param:
@@ -89,13 +91,11 @@ class ClipSearchView(ListAPIView):
             val = is_favorite.lower() == "true"
             clips = [c for c in clips if c.is_favorite == val]
 
-        clips = list(queryset)
-
         # Sorting
         sort = request.query_params.get('sort', 'recent')
         if sort == "recent":
             clips.sort(key=lambda c: c.created_at, reverse=True)
-        elif sort == "favourites":
+        elif sort == "favorites":
             clips = [c for c in clips if c.is_favorite]
             clips.sort(key=lambda c: c.created_at, reverse=True)
         elif sort == "trending":
@@ -103,7 +103,6 @@ class ClipSearchView(ListAPIView):
             clips.sort(key=lambda c: getattr(c, "num_ratings", 0), reverse=True)
 
         # Paginate if desired, or slice manually
-        # (DRF pagination requires queryset; for semantic, you'd want to paginate after filtering)
         page = self.paginate_queryset(clips)
         serializer = self.get_serializer(page if page is not None else clips, many=True, context={"percent_match_map": percent_by_clip})
         if page is not None:
@@ -141,23 +140,6 @@ class ProxyImageView(APIView):
             return HttpResponse(response.content, content_type=content_type)
         except Exception as e:
             return HttpResponse(f"Failed to fetch image: {str(e)}", status=500)
-        # image_url = request.query_params.get('url')
-        # if not image_url:
-        #     return HttpResponseBadRequest('Missing url parameter')
-        # parsed = urlparse(image_url)
-        # if parsed.scheme not in ('http', 'https'):
-        #     return HttpResponseBadRequest('Invalid URL scheme')
-        # try:
-        #     resp = requests.get(image_url, stream=True, timeout=5)
-        #     content_type = resp.headers.get('Content-Type', '')
-        #     # if not content_type.startswith('image/'):
-        #     #     return HttpResponseBadRequest('URL does not point to an image')
-        #     response = StreamingHttpResponse(resp.iter_content(1024), content_type=content_type)
-        #     # Optionally set cache headers, etc.
-        #     response['Content-Length'] = resp.headers.get('Content-Length', '')
-        #     return response
-        # except requests.RequestException:
-        #     return HttpResponseBadRequest('Failed to fetch image')
 
 class ClipDetailView(generics.RetrieveAPIView):
     serializer_class = ClipListSerializer
@@ -171,5 +153,26 @@ class ClipDetailView(generics.RetrieveAPIView):
 
     def retrieve(self, request, *args, **kwargs):
         response = super().retrieve(request, *args, **kwargs)
-        response['Cache-Control'] = 'public, max-age=120'
+        response['Cache-Control'] = 'public, max-age=120'   
         return response
+
+class CurioListView(ListAPIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        curios = Curio.objects.filter(user_id=request.user.id)
+        data = []
+        for curio in curios:
+            clips = list(Clip.objects.filter(curio=curio))
+            thumbnails = [c.thumbnail_url for c in clips if c.thumbnail_url]
+            # Pick up to 4 random thumbnails
+            thumbnails = sample(thumbnails, min(4, len(thumbnails))) if thumbnails else []
+            data.append({
+                'id': str(curio.id),
+                'name': curio.name,
+                'clipCount': len(clips),
+                'thumbnails': thumbnails,
+                'created_at': curio.created_at.isoformat() if curio.created_at else None,
+                'updated_at': curio.updated_at.isoformat() if curio.updated_at else None,
+            })
+        return Response(data)

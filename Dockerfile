@@ -14,6 +14,7 @@ RUN apt-get update \
         gcc \
         netcat-openbsd \
         curl \
+        ffmpeg \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

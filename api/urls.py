@@ -5,12 +5,14 @@ from .views import (
     ClipProcessingStatusView,
     ClipSearchView,
     ProxyImageView,
-    ClipDetailView
+    ClipDetailView,
+    CurioListView
 )
 
 
 urlpatterns = [
     path('curios/', CurioCreateView.as_view(), name='curio-create'),
+    path('curios/list/', CurioListView.as_view(), name='curio-list'),
     path('clips/', ClipCreateView.as_view(), name='clip-create'),
     path('clip-status/<int:pk>/', ClipProcessingStatusView.as_view(), name='clip-status'),
     path('clips/search/', ClipSearchView.as_view(), name='clip-search'),

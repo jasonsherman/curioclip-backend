@@ -218,10 +218,11 @@ Rules:
                 temperature=0.2,
             )
             ai_content = response.choices[0].message.content.strip()
+            logging.info(f"ai content:  {ai_content}")
             summary_data = parse_openai_response(ai_content)
             return summary_data
         except Exception as e:
-            logger.info(f"{model} is busy..")
+            logger.info(f"{model} is busy.. {e}")
             last_exception = e
             continue
     raise last_exception if last_exception else RuntimeError("All model calls failed.")

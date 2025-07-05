@@ -21,8 +21,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env()
 environ.Env.read_env(os.path.join(BASE_DIR, '.env'))
 
-CELERY_BROKER_URL = "redis://redis:6379/0"
-CELERY_RESULT_BACKEND = "redis://redis:6379/0"
+CELERY_REDIS_HOST=env("CELERY_REDIS_HOST")
+
+CELERY_BROKER_URL = f"redis://{CELERY_REDIS_HOST}:6379/0"
+CELERY_RESULT_BACKEND = f"redis://{CELERY_REDIS_HOST}:6379/0"
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
