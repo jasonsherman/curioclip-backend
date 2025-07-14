@@ -76,9 +76,11 @@ class ClipSearchView(ListAPIView):
                 clips = [c for c in clips if set(tags).intersection(set([t for t in c.cliptag_set.values_list('tag__name', flat=True)]))]
 
         # Platform filter
-        platform = request.query_params.get('platform')
-        if platform:
-            clips = [c for c in clips if c.platform == platform]
+        platform_param = request.query_params.get('platform')
+        if platform_param:
+            platforms = [p.strip() for p in platform_param.split(',') if p.strip()]
+            if platforms:
+                clips = [c for c in clips if c.platform in platforms]
 
         # Curio filter
         curio_id = request.query_params.get('curio')
