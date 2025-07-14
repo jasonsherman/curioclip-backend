@@ -178,3 +178,27 @@ class CurioListView(ListAPIView):
                 'updated_at': curio.updated_at.isoformat() if curio.updated_at else None,
             })
         return Response(data)
+
+class ClipFavoriteUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        clip_id = kwargs.get('id')
+        try:
+            clip = Clip.objects.get(id=clip_id, user_id=request.user.id)
+        except Clip.DoesNotExist:
+            return Response({'error': 'Clip not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        is_favorite = request.data.get('is_favorite')
+        if is_favorite is None:
+            return Response({'error': 'Missing is_favorite field.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not isinstance(is_favorite, bool):
+            # Accept string 'true'/'false' for convenience
+            if isinstance(is_favorite, str):
+                is_favorite = is_favorite.lower() == 'true'
+            else:
+                return Response({'error': 'is_favorite must be a boolean.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        clip.is_favorite = is_favorite
+        clip.save(update_fields=['is_favorite'])
+        return Response({'id': str(clip.id), 'is_favorite': clip.is_favorite})

@@ -6,7 +6,8 @@ from .views import (
     ClipSearchView,
     ProxyImageView,
     ClipDetailView,
-    CurioListView
+    CurioListView,
+    ClipFavoriteUpdateView,
 )
 
 
@@ -18,4 +19,5 @@ urlpatterns = [
     path('clips/search/', ClipSearchView.as_view(), name='clip-search'),
     path('clips/<uuid:id>/', ClipDetailView.as_view(), name='clip-detail'),
     path('proxy-image/', ProxyImageView.as_view(), name='proxy-image'),
+    path('clips/<uuid:id>/favorite/', ClipFavoriteUpdateView.as_view(), name='clip-favorite-update'),
 ]
