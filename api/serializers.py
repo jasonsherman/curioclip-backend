@@ -35,3 +35,16 @@ class ClipListSerializer(serializers.ModelSerializer):
         # Get from serializer context if available
         percent_map = self.context.get("percent_match_map", {})
         return percent_map.get(str(obj.id), None)
+
+class CurioFeedSerializer(serializers.ModelSerializer):
+    owner_name = serializers.CharField(source="user.display_name", read_only=True)
+    average_rating = serializers.FloatField(read_only=True)
+    rating_count = serializers.IntegerField(read_only=True)
+    thumbnails = serializers.ListField(child=serializers.CharField(), read_only=True)
+
+    class Meta:
+        model = Curio
+        fields = [
+            "id", "name", "description", "is_public", "created_at", "updated_at",
+            "owner_name", "average_rating", "rating_count", "thumbnails"
+        ]

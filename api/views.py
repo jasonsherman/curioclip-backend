@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Count, Q, Case, When, Value, FloatField
 from .models import Curio, Clip, Tag, ClipProcessingTask
-from .serializers import CurioCreateSerializer, ClipCreateSerializer, ClipListSerializer
+from .serializers import CurioCreateSerializer, ClipCreateSerializer, ClipListSerializer, CurioFeedSerializer
 from .utils import embed_texts, vector_search_clip_ids_with_similarity
 from .tasks import process_clip_task 
 from .constants import OPENAI_API_KEY
@@ -14,6 +14,7 @@ from django.http import StreamingHttpResponse, HttpResponseBadRequest, HttpRespo
 import requests
 from urllib.parse import urlparse
 from random import sample
+from django.db import models
 
 class CurioCreateView(generics.CreateAPIView):
     serializer_class = CurioCreateSerializer
@@ -179,6 +180,38 @@ class CurioListView(ListAPIView):
             })
         return Response(data)
 
+class CurioFeedView(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = CurioFeedSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        # Exclude the requesting user's own curios, only public
+        return (
+            Curio.objects.filter(is_public=True)
+            .exclude(user_id=self.request.user.id)
+            .select_related('user')
+            .annotate(
+                average_rating=models.Avg('curiorating__rating'),
+                rating_count=models.Count('curiorating__rating')
+            )
+        )
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        data = []
+        for curio in queryset:
+            # Get up to 4 thumbnails from this curio's clips
+            clips = Clip.objects.filter(curio=curio)
+            thumbnails = [c.thumbnail_url for c in clips if c.thumbnail_url]
+            thumbnails = sample(thumbnails, min(4, len(thumbnails))) if thumbnails else []
+            # Use serializer to get base data
+            serializer = self.get_serializer(curio)
+            curio_data = serializer.data
+            curio_data['thumbnails'] = thumbnails
+            data.append(curio_data)
+        return Response(data)
+
 class ClipFavoriteUpdateView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -202,3 +235,27 @@ class ClipFavoriteUpdateView(APIView):
         clip.is_favorite = is_favorite
         clip.save(update_fields=['is_favorite'])
         return Response({'id': str(clip.id), 'is_favorite': clip.is_favorite})
+
+class CurioPublicStatusUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        curio_id = kwargs.get('id')
+        try:
+            curio = Curio.objects.get(id=curio_id, user_id=request.user.id)
+        except Curio.DoesNotExist:
+            return Response({'error': 'Curio not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        is_public = request.data.get('is_public')
+        if is_public is None:
+            return Response({'error': 'Missing is_public field.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not isinstance(is_public, bool):
+            # Accept string 'true'/'false' for convenience
+            if isinstance(is_public, str):
+                is_public = is_public.lower() == 'true'
+            else:
+                return Response({'error': 'is_public must be a boolean.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        curio.is_public = is_public
+        curio.save(update_fields=['is_public'])
+        return Response({'id': str(curio.id), 'is_public': curio.is_public})

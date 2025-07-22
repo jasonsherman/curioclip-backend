@@ -8,12 +8,16 @@ from .views import (
     ClipDetailView,
     CurioListView,
     ClipFavoriteUpdateView,
+    CurioFeedView,
+    CurioPublicStatusUpdateView,
 )
 
 
 urlpatterns = [
     path('curios/', CurioCreateView.as_view(), name='curio-create'),
     path('curios/list/', CurioListView.as_view(), name='curio-list'),
+    path('curios/feed/', CurioFeedView.as_view(), name='curio-feed'),
+    path('curios/<uuid:id>/public/', CurioPublicStatusUpdateView.as_view(), name='curio-public-status-update'),
     path('clips/', ClipCreateView.as_view(), name='clip-create'),
     path('clip-status/<int:pk>/', ClipProcessingStatusView.as_view(), name='clip-status'),
     path('clips/search/', ClipSearchView.as_view(), name='clip-search'),
