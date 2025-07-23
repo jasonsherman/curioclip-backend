@@ -49,7 +49,7 @@ SUPABASE_ANON_KEY = env('SUPABASE_ANON_KEY', default="dummy-supabase-anon-key")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["api.curioclip.com"]
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
