@@ -20,7 +20,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env()
 env.read_env(os.path.join(BASE_DIR, '.env')) if os.path.exists(os.path.join(BASE_DIR, '.env')) else None
 
-CELERY_REDIS_HOST=env("CELERY_REDIS_HOST")
+CELERY_REDIS_HOST=env("CELERY_REDIS_HOST", default="dummy-redis-host")
 
 CELERY_BROKER_URL = f"redis://{CELERY_REDIS_HOST}:6379/0"
 CELERY_RESULT_BACKEND = f"redis://{CELERY_REDIS_HOST}:6379/0"
@@ -30,8 +30,8 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 
 # AI API KEYS
-OPENAI_API_KEY = env('OPENAI_API_KEY')
-OPENROUTER_API_KEY = env('OPENROUTER_API_KEY')
+OPENAI_API_KEY = env('OPENAI_API_KEY', default="dummy-openai-key")
+OPENROUTER_API_KEY = env('OPENROUTER_API_KEY', default="dummy-openrouter-key")
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
@@ -42,9 +42,9 @@ SECRET_KEY = 'django-insecure-otm5a)fehr&d2^xvca89zad1%u$t_8yqqt07@f3%&l=udxsf)0
 SUPABASE_JWT_SECRET = env('SUPABASE_JWT_SECRET')
 
 # SUPABASE TOKENS
-SUPABASE_URL = env('SUPABASE_URL')
-SUPABASE_KEY = env('SUPABASE_KEY')
-SUPABASE_ANON_KEY = env('SUPABASE_ANON_KEY')
+SUPABASE_URL = env('SUPABASE_URL', default="dummy-supabase-url")
+SUPABASE_KEY = env('SUPABASE_KEY', default="dummy-supabase-key")
+SUPABASE_ANON_KEY = env('SUPABASE_ANON_KEY', default="dummy-supabase-anon-key")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -111,11 +111,11 @@ WSGI_APPLICATION = 'curioclip.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': env('DB_NAME'),
-        'USER': env('DB_USER'),
-        'PASSWORD': env('DB_PASSWORD'),
-        'HOST': env('DB_HOST'),
-        'PORT': env('DB_PORT'),
+        'NAME': env('DB_NAME', default="dummy-db-name"),
+        'USER': env('DB_USER', default="dummy-db-user"),
+        'PASSWORD': env('DB_PASSWORD', default="dummy-db-password"),
+        'HOST': env('DB_HOST', default="dummy-db-host"),
+        'PORT': env('DB_PORT', default="dummy-db-port"),
     }
 }
 
