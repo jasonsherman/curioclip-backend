@@ -39,7 +39,7 @@ OPENROUTER_API_KEY = env('OPENROUTER_API_KEY', default="dummy-openrouter-key")
 SECRET_KEY = 'django-insecure-otm5a)fehr&d2^xvca89zad1%u$t_8yqqt07@f3%&l=udxsf)0'
 
 # JWT Settings
-SUPABASE_JWT_SECRET = env('SUPABASE_JWT_SECRET')
+SUPABASE_JWT_SECRET = env('SUPABASE_JWT_SECRET', default="dummy-supabase-jwt-secret")
 
 # SUPABASE TOKENS
 SUPABASE_URL = env('SUPABASE_URL', default="dummy-supabase-url")
