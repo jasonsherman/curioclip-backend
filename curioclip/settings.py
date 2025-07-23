@@ -22,8 +22,8 @@ env.read_env(os.path.join(BASE_DIR, '.env')) if os.path.exists(os.path.join(BASE
 
 CELERY_REDIS_HOST=env("CELERY_REDIS_HOST", default="dummy-redis-host")
 
-CELERY_BROKER_URL = f"redis://{CELERY_REDIS_HOST}:6379/0"
-CELERY_RESULT_BACKEND = f"redis://{CELERY_REDIS_HOST}:6379/0"
+CELERY_BROKER_URL = env("REDIS_URL", default=None)
+CELERY_RESULT_BACKEND = env("REDIS_URL", default=None)
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
