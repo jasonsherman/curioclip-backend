@@ -46,10 +46,13 @@ SUPABASE_URL = env('SUPABASE_URL', default="dummy-supabase-url")
 SUPABASE_KEY = env('SUPABASE_KEY', default="dummy-supabase-key")
 SUPABASE_ANON_KEY = env('SUPABASE_ANON_KEY', default="dummy-supabase-anon-key")
 
+# SUPABASE Storage
+COOKIE_LOCAL_PATH = env("COOKIE_LOCAL_PATH", default="dummy__cookie_local_path")
+COOKIE_STORAGE_PATH = env("COOKIE_STORAGE_PATH", default="dummy_cookie_storage_path")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["api.curioclip.com"]
+ALLOWED_HOSTS = ["api.curioclip.com", "127.0.0.1"]
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [

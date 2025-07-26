@@ -10,10 +10,11 @@ from django.db import connection
 from yt_dlp import YoutubeDL
 import json_repair
 from datetime import datetime, timedelta
-from .models import Clip, Tag, ClipTag, Curio, ClipEmbedding
+from .models import Clip, Tag, ClipTag, Curio, ClipEmbedding, Profile
 from .constants import (
     EMBEDDING_MODEL, TRANSCRIPTION_MODEL, AI_MODELS,
-    SUPABASE_JWT_SECRET, 
+    SUPABASE_JWT_SECRET, COOKIE_STORAGE_PATH, COOKIE_LOCAL_PATH,
+    SUPABASE_URL, SUPABASE_KEY
 )
 import logging
 
@@ -65,6 +66,7 @@ def get_platform_video_id(info, url, platform):
 
 def fetch_audio_and_metadata(url):
     platform = detect_platform(url)
+    cookiefile = ensure_cookie_file()
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': tempfile.mktemp(suffix='.%(ext)s'),
@@ -73,6 +75,7 @@ def fetch_audio_and_metadata(url):
         'noplaylist': True,
         'ignoreerrors': False,
         'restrictfilenames': True,
+        'cookiefile': cookiefile,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
@@ -458,6 +461,41 @@ def upload_image_to_supabase(local_path, storage_path, supabase_url, supabase_ke
         return public_url
     
 
+def download_file_from_supabase(storage_path, destination_path, supabase_url, supabase_key, bucket="secrets"):
+    """
+    Downloads a file from a private Supabase bucket to a local destination.
+    Args:
+        storage_path (str): Path to the file in the bucket (e.g., 'folder/file.jpg').
+        destination_path (str): Local path to save the downloaded file.
+        supabase_url (str): Supabase project URL.
+        supabase_key (str): Supabase service role or user JWT (must have access).
+        bucket (str): Name of the bucket (default: 'secrets').
+    Raises:
+        Exception: If download fails or file not found.
+    Returns:
+        str: Path to the downloaded file.
+    """
+    supabase = create_client(supabase_url, supabase_key)
+    try:
+        data = supabase.storage.from_(bucket).download(storage_path)
+        with open(destination_path, 'wb') as f:
+            f.write(data)
+        return destination_path
+    except Exception as e:
+        logger.error(f"Failed to download file from Supabase: {e}")
+        raise Exception(f"Failed to download file from Supabase: {e}")
+
+def ensure_cookie_file():
+    if not os.path.exists(COOKIE_LOCAL_PATH):
+        download_file_from_supabase(
+            storage_path=COOKIE_STORAGE_PATH,
+            destination_path=COOKIE_LOCAL_PATH,
+            supabase_url=SUPABASE_URL,
+            supabase_key=SUPABASE_KEY,
+            bucket="secrets",
+        )
+    return COOKIE_LOCAL_PATH
+
 def compress_image(input_path, output_path, max_size=(320, 320), quality=60):
     """
     Compresses and resizes an image to save storage/bandwidth.
@@ -474,3 +512,10 @@ def compress_image(input_path, output_path, max_size=(320, 320), quality=60):
         return output_path
     except Exception as e:
         raise Exception(f"Compression failed: {str(e)}")
+    
+def get_profile_from_request(request):
+    supabase_user = request.user
+    # Defensive: handle cases where id is missing or invalid
+    if not hasattr(supabase_user, "id"):
+        raise Exception("Authenticated user missing id")
+    return Profile.objects.get(user_id=supabase_user.id)
